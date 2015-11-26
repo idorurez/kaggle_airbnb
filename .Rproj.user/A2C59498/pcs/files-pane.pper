@@ -1,0 +1,9 @@
+{
+    "path" : "D:/dev/kaggle/airbnb",
+    "sortOrder" : [
+        {
+            "ascending" : true,
+            "columnIndex" : 2
+        }
+    ]
+}
