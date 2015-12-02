@@ -57,22 +57,21 @@ run_prediction <- function () {
   # clean test data
   df_test$date_account_created <- as.numeric(as.POSIXct(df_test$date_account_created))
   df_test$date_first_booking <- as.numeric(as.POSIXct(df_test$date_first_booking))
-  # df_test$first_browser <- as.character(df_test$first_browser)
   colnames(df_test)[which(names(df_test) == "id")] <- "user_id"
   
   # clean train data
   df_train$date_account_created <- as.numeric(as.POSIXct(df_train$date_account_created))
   df_train$date_first_booking <- as.numeric(as.POSIXct(df_train$date_first_booking))
-  # df_train$first_browser <- as.character(df_train$first_browser)
   colnames(df_train)[which(names(df_train) == "id")] <- "user_id"
   
   df_train$age <- as.numeric(df_train$age)
   df_test$age <- as.numeric(df_test$age)
   
-  # variable "engineering"
+  # feature "engineering"
   # -----------------------
   
   # fix age issues
+  # let's assume that the folks who don't enter in an age or has the current 2014 year, at least 18 years of age
   df_train$age[is.na(df_train$age) | df_train$age==2014] <- as.numeric("18")
   df_test$age[is.na(df_test$age) | df_test$age==2014] <- as.numeric("18")
   
@@ -80,13 +79,12 @@ run_prediction <- function () {
   # fix gender issues
   df_train$gender[is.na(df_train$gender)] <- as.factor(sample(gender, 1))
   df_test$gender[is.na(df_test$gender)] <- as.factor(sample(gender, 1))
+  #df_train$gender[is.na(df_train$gender)] <- as.factor("OTHER")
+  #df_test$gender[is.na(df_test$gender)] <- as.factor("OTHER")
   
   # fix missing data
   df_test$date_first_booking[is.na(df_test$date_first_booking)] <- max(df_test$date_account_created)
   df_train$date_first_booking[is.na(df_train$date_first_booking)] <- max(df_train$date_account_created)
-  
-  df_test$date_first_booking[is.na(df_test$secs_elapsed)] <- max(df_test$secs_elapsed)
-  df_train$date_first_booking[is.na(df_train$secs_elapsed)] <- max(df_train$secs_elapsed)
   
   
   # prepare data for merging
@@ -99,12 +97,17 @@ run_prediction <- function () {
   dt_test <- dt_test[dt_sessions, nomatch=0]
   dt_train <- dt_train[dt_sessions, nomatch=0]
   
+  # more feature engineering
+  dt_test$secs_elapsed[is.na(dt_test$secs_elapsed)] <- max(dt_test$secs_elapsed)
+  dt_train$secs_elapsed[is.na(dt_train$secs_elapsed)] <- max(dt_train$secs_elapsed)
+  
+  
   # merge by country destination
-  # dt_train <- merge(dt_train, dt_countries, by="country_destination")
+  dt_train <- merge(dt_train, dt_countries, by="country_destination", all=TRUE)
 
   # clean all NA stuff
-  df_test <- df_test[complete.cases(df_test),]
-  dt_train <- dt_train[complete.cases(dt_train),]
+  # df_test <- df_test[complete.cases(df_test),]
+  #dt_train <- dt_train[complete.cases(dt_train),]
   
   # trim
   dt_train$user_id <- NULL
@@ -112,11 +115,12 @@ run_prediction <- function () {
   # common destinations ranked
   common_destination_ranked <- names(sort(rank(summary(dt_train$country_destination)), decreasing=TRUE))
   
+  # drop empty levels, so randomForest doesn't throw a fit
   dt_train <- droplevels(dt_train)
   # dt_train$user_id <- as.factor(dt_train$user_id)
   dt_test <- droplevels(dt_test)
   
-  # sorting out levels
+  # sorting out levels, so randomForest doesn't throw a fit
   
   levels(dt_train$signup_method) <- levels(dt_test$signup_method)
   levels(dt_train$action_type) <- levels(dt_test$action_type)
@@ -143,7 +147,7 @@ run_prediction <- function () {
   levels(dt_test$first_browser) <- first_browser_levels
   levels(dt_train$first_browser) <- first_browser_levels
 
-  
+  # run fit
   
   model <- randomForest(as.factor(country_destination) ~ age + gender + signup_method + language + date_account_created
                         + date_first_booking + action_type + secs_elapsed + device_type, 
@@ -155,8 +159,7 @@ run_prediction <- function () {
   
   postpred <- unique(data.frame(id = dt_test$user_id, country = prediction))
   postpred <- split(postpred, postpred$id)
-  # common_destination_ranked <- names(sort(rank(summary(dt_train$country_destination)), decreasing=TRUE))
-  
+
   submit <- NULL
 
   for (data in postpred) {
@@ -165,10 +168,10 @@ run_prediction <- function () {
     # get list of non NA countries that this person has listed
     countriesPredicted <- as.character(data$country[!is.na(data$country)])
 
-    # remove list of non NA countries from tempRanked
+    # remove list of non NA countries we've found from tempRanked
     tempRanked <- tempRanked[! tempRanked %in% countriesPredicted]
 
-    # get countries list
+    # get countries list as it stands
     countries <- data$country
     
     revised <- NULL
@@ -180,14 +183,13 @@ run_prediction <- function () {
     revised <- c(revised, country)
     }
     
-    # we've replaced NA with ranked list
+    # we've replaced NAs with a ranked list
     data$country <- revised
     
     if (length(data$country) < 5) {
     # build list of countries left in the ranked list
       user_idList <- rep(as.character(data$id[1]), 5-length(data$country))
       countriesLeft <- tempRanked[1:length(user_idList)]
-    
     
       df <- data.frame(id=user_idList, country=countriesLeft)
       data <- rbind(data, df)
